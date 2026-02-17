@@ -16,7 +16,7 @@
 #     Original script created
 #   Max Glines
 #     Initial spectral slope ratio calculations and time-series generation across sites
-#   Alexi Besser
+#   Alexi Besser (02/16/2026)
 #     Updated spectral slope ratios and time-series across sites
 ######################################################################################################################## 
 
@@ -73,6 +73,7 @@ sw_suva_plot <- ggplot(swc_SUVA, aes(x = wavelength, y = SUVA, color = sampleID)
 
 sw_suva_plot
 
+
 ### GROUND WATER ###
 
 #' Pulls groundwater chemistry data from NEON data portal and loads tables into R environment
@@ -115,6 +116,123 @@ gw_suva_plot <- ggplot(gwc_SUVA, aes(x = wavelength, y = SUVA, color = sampleID)
 
 gw_suva_plot
 
+
+### SURFACE WATER SPECTRAL SLOPE RATIO CALCULATIONS ###
+
+#' Plots log(SUVA) for all sites and dates
+ggplot(swc_SUVA, aes(wavelength, log(SUVA))) +
+  geom_line() +
+  facet_wrap(~siteID)
+
+### I am not sure these next two chunks are doing what is intended ###
+#' Removes observations where SUVA is NA at any wavelength
+swc_SUVA_wide <- swc_SUVA %>% 
+  select(-sampleID.wavelength, -DOC,-absorbance) %>% 
+  group_by(siteID, collectDate, wavelength) %>% 
+  mutate(SUVA = mean(SUVA, na.rm = TRUE)) %>% 
+  pivot_wider(names_from = wavelength, values_from = SUVA) %>% 
+  ungroup()
+
+#' Annotate something here...
+swc_suva_filter <- swc_SUVA_wide[complete.cases(swc_SUVA_wide), ] 
+
+#' I think this is a simpler way but might not take care of the complete data for each observation issue... 
+swc_SUVA_cleaned <- swc_SUVA[!is.na(swc_SUVA$SUVA),]
+
+#' Calculates slope from 275-295 nm
+swc_slopes_275 <- swc_SUVA_cleaned %>% 
+  filter(wavelength >= 275 & wavelength <= 295) %>% 
+  group_by(siteID, collectDate) %>% 
+  nest() %>% 
+  mutate(S = map(data, ~lm(log(SUVA) ~ wavelength, data = .x))) %>% 
+  mutate(slope = map(S, ~tidy(.x))) %>% 
+  unnest(slope) %>% 
+  select(siteID, collectDate, term, estimate) %>% 
+  pivot_wider(names_from = term, values_from = estimate) %>% 
+  dplyr::rename("intercept275" = `(Intercept)`,
+         "slope275" = wavelength) %>% 
+  ungroup() %>% 
+  mutate(slope275 = slope275*-1)
+
+#' Calculates slope from 350-400 nm
+swc_slopes_350 <- swc_SUVA_cleaned %>% 
+  filter(wavelength >= 350 & wavelength <= 400) %>% 
+  group_by(siteID, collectDate) %>% 
+  nest() %>% 
+  mutate(S = map(data, ~lm(log(SUVA) ~ wavelength, data = .x))) %>% 
+  mutate(slope = map(S, ~tidy(.x))) %>% 
+  unnest(slope) %>% 
+  select(siteID, collectDate, term, estimate) %>% 
+  pivot_wider(names_from = term,values_from = estimate) %>% 
+  dplyr::rename("intercept350" = `(Intercept)`,
+         "slope350" = wavelength) %>% 
+  ungroup() %>% 
+  mutate(slope350 = slope350*-1)
+
+#' Calculates spectral slope ratio
+swc_suva_slopes <- merge(x = swc_slopes_275, y = swc_slopes_350,
+                         by = c("siteID", "collectDate")) %>%
+  mutate(Sr = slope275/slope350)
+
+
+### GROUNDWATER SPECTRAL SLOPE RATIO CALCULATIONS ###
+
+#' Plots log(SUVA) for all sites and dates
+ggplot(gwc_SUVA, aes(wavelength, log(SUVA))) +
+  geom_line() +
+  facet_wrap(~siteID)
+
+### I am not sure these next two chunks are doing what is intended ###
+#' Removes observations where SUVA is NA at any wavelength
+gwc_SUVA_wide <- gwc_SUVA %>% 
+  select(-sampleID.wavelength, -DOC,-absorbance) %>% 
+  group_by(siteID, collectDate, wavelength) %>% 
+  mutate(SUVA = mean(SUVA, na.rm = TRUE)) %>% 
+  pivot_wider(names_from = wavelength, values_from = SUVA) %>% 
+  ungroup()
+
+#' Annotate something here...
+gwc_suva_filter <- gwc_SUVA_wide[complete.cases(gwc_SUVA_wide), ] 
+
+#' I think this is a simpler way but might not take care of the complete data for each observation issue... 
+gwc_SUVA_cleaned <- gwc_SUVA[!is.na(gwc_SUVA$SUVA),]
+
+#' Calculates slope from 275-295 nm
+gwc_slopes_275 <- gwc_SUVA_cleaned %>% 
+  filter(wavelength >= 275 & wavelength <= 295) %>% 
+  group_by(siteID, collectDate) %>% 
+  nest() %>% 
+  mutate(S = map(data, ~lm(log(SUVA) ~ wavelength, data = .x))) %>% 
+  mutate(slope = map(S, ~tidy(.x))) %>% 
+  unnest(slope) %>% 
+  select(siteID, collectDate, term, estimate) %>% 
+  pivot_wider(names_from = term, values_from = estimate) %>% 
+  dplyr::rename("intercept275" = `(Intercept)`,
+                "slope275" = wavelength) %>% 
+  ungroup() %>% 
+  mutate(slope275 = slope275*-1)
+
+#' Calculates slope from 350-400 nm
+gwc_slopes_350 <- gwc_SUVA_cleaned %>% 
+  filter(wavelength >= 350 & wavelength <= 400) %>% 
+  group_by(siteID, collectDate) %>% 
+  nest() %>% 
+  mutate(S = map(data, ~lm(log(SUVA) ~ wavelength, data = .x))) %>% 
+  mutate(slope = map(S, ~tidy(.x))) %>% 
+  unnest(slope) %>% 
+  select(siteID, collectDate, term, estimate) %>% 
+  pivot_wider(names_from = term,values_from = estimate) %>% 
+  dplyr::rename("intercept350" = `(Intercept)`,
+                "slope350" = wavelength) %>% 
+  ungroup() %>% 
+  mutate(slope350 = slope350*-1)
+
+#' Calculates spectral slope ratio
+gwc_suva_slopes <- merge(x = gwc_slopes_275, y = gwc_slopes_350,
+                         by = c("siteID", "collectDate")) %>%
+  mutate(Sr = slope275/slope350)
+
+
 ### SURFACE WATER PLOTS ###
 
 #' Figure 1
@@ -142,6 +260,35 @@ Fig_1_sw_suva_free <- ggplot(swc_SUVA, aes(x = wavelength, y = SUVA, group = col
 Fig_1_sw_suva_free
 
 ggsave("Figures/Fig_1_SurfaceWater_SUVA_free.pdf", plot = last_plot())
+
+#' Figure 3
+#' Boxplots of spectral slope ratios across sites
+Fig_3_sw_sr_boxplots <- ggplot(swc_suva_slopes, aes(siteID, Sr)) +
+  geom_boxplot() +
+  theme_linedraw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank()) +
+  ylab("Spectral Slope Ratio")
+
+Fig_3_sw_sr_boxplots
+
+ggsave("Figures/Fig_3_SurfaceWater_Sr_boxplots.pdf", plot = last_plot())
+
+#' Figure 5
+#' Time-series of spectral slope ratios across sites
+#' Fixed axes
+Fig_5_sw_sr_time_fixed <- ggplot(swc_suva_slopes, aes(collectDate, Sr)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~siteID, scales = "fixed") +
+  theme_linedraw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0),
+        axis.title.x = element_blank()) +
+  ylab("Spectral Slope Ratio")
+  
+Fig_5_sw_sr_time_fixed
+
+ggsave("Figures/Fig_5_SurfaceWater_Sr_time_fixed.pdf", plot = last_plot())
 
 ### GROUNDWATER PLOTS ###
 
@@ -171,79 +318,88 @@ Fig_2_gw_suva_free
 
 ggsave("Figures/Fig_2_GroundWater_SUVA_free.pdf", plot = last_plot())
 
-#spectral slope--------------------
-library(broom)
+#' Figure 4
+#' Boxplots of spectral slope ratios across sites
+Fig_4_gw_sr_boxplots <- ggplot(gwc_suva_slopes, aes(siteID, Sr)) +
+  geom_boxplot() +
+  theme_linedraw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank()) +
+  ylab("Spectral Slope Ratio")
 
-ggplot(suva,aes(wavelength,log(SUVA)))+
-  geom_line()+
-  facet_wrap(~siteID)
+Fig_4_gw_sr_boxplots
 
-#remove any observations where SUVA is NA at any wavelength
-suva_wide <- suva %>% 
-  select(-DOC,-absorbance) %>% 
-  group_by(siteID,date,wavelength) %>% 
-  summarise(SUVA = mean(SUVA,na.rm=TRUE)) %>% 
-  pivot_wider(names_from=wavelength,values_from=SUVA) %>% 
-  ungroup()
+ggsave("Figures/Fig_4_GroundWater_Sr_boxplots.pdf", plot = last_plot())
 
-suva_filter <- suva_wide[complete.cases(suva_wide),] %>% 
-  pivot_longer(cols=3:ncol(suva_wide),names_to='wavelength',values_to='SUVA') %>% 
-  mutate(wavelength=as.numeric(wavelength))
+#' Figure 6
+#' Time-series of spectral slope ratios across sites
+#' Fixed axes
+Fig_6_gw_sr_time_fixed <- ggplot(gwc_suva_slopes, aes(collectDate, Sr)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~siteID, scales = "fixed") +
+  theme_linedraw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0),
+        axis.title.x = element_blank()) +
+  ylab("Spectral Slope Ratio")
 
-#calculate slope from 275-295 nm
-slopes_275 <- suva_filter %>% 
-  filter(wavelength >= 275 & wavelength <= 295) %>% 
-  group_by(siteID,date) %>% 
-  nest() %>% 
-  mutate(S = map(data,~lm(log(SUVA)~wavelength,data=.x))) %>% 
-  mutate(slope = map(S,~tidy(.x))) %>% 
-  unnest(slope) %>% 
-  select(siteID,date,term,estimate) %>% 
-  pivot_wider(names_from=term,values_from=estimate) %>% 
-  rename('intercept350'=`(Intercept)`,
-         'slope275'=wavelength) %>% 
-  ungroup() %>% 
-  mutate(slope275=slope275*-1)
+Fig_6_gw_sr_time_fixed
 
-#calculate slope from 350-400 nm
-slopes_350 <- suva_filter %>% 
-  filter(wavelength >= 350 & wavelength <= 400) %>% 
-  group_by(siteID,date) %>% 
-  nest() %>% 
-  mutate(S = map(data,~lm(log(SUVA)~wavelength,data=.x))) %>% 
-  mutate(slope = map(S,~tidy(.x))) %>% 
-  unnest(slope) %>% 
-  select(siteID,date,term,estimate) %>% 
-  pivot_wider(names_from=term,values_from=estimate) %>% 
-  rename('intercept350'=`(Intercept)`,
-         'slope350'=wavelength) %>% 
-  ungroup() %>% 
-  mutate(slope350=slope350*-1)
+ggsave("Figures/Fig_6_GroundWater_Sr_time_fixed.pdf", plot = last_plot())
 
-#calculate slope ratio
-suva_slopes <- merge(x=slopes_275,y=slopes_350,
-                     by=c('siteID','date')) %>% 
-  mutate(Sr = slope275/slope350)
 
-#visualize data
-ggplot(suva_slopes,aes(Sr,fill=siteID))+
-  geom_density(alpha=0.2)
+#' Groundwater vs. Surface Water Comparisons
+#' Boxplots
+swc_suva_slopes$type <- "Surface Water"
+gwc_suva_slopes$type <- "Groundwater"
+suva_slopes <- rbind(swc_suva_slopes, gwc_suva_slopes)
 
-ggplot(suva_slopes,aes(siteID,Sr))+
-  geom_boxplot()
+Fig_7_sw_gw_sr_boxplots <- ggplot(suva_slopes, aes(x = siteID, y = Sr,
+                                                   color = type)) +
+geom_boxplot() +
+  theme_linedraw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank()) +
+  ylab("Spectral Slope Ratio")
 
-ggplot(suva_slopes,aes(date,Sr))+
-  geom_point()+
-  geom_line()+
-  facet_wrap(~siteID,scales='free')
+Fig_7_sw_gw_sr_boxplots
 
-variation <- suva_slopes %>% 
+ggsave("Figures/Fig_7_Ground_Surface_Sr_boxplots.pdf", plot = last_plot())
+
+#' Figure 8
+#' Time-series of spectral slope ratios across sites
+#' Fixed axes
+Fig_8_sw_gw_sr_time_fixed <- ggplot(suva_slopes, aes(x = collectDate, y = Sr,
+                                                         color = type)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~siteID, scales = "fixed") +
+  theme_linedraw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0),
+        axis.title.x = element_blank()) +
+  ylab("Spectral Slope Ratio")
+
+Fig_8_sw_gw_sr_time_fixed
+
+ggsave("Figures/Fig_8_Ground_Surface_Sr_time_fixed.pdf", plot = last_plot())
+
+
+#' Other data visualization plots for surface water
+ggplot(swc_suva_slopes, aes(Sr, fill = siteID)) +
+  geom_density(alpha = 0.2)
+
+ggplot(swc_suva_slopes, aes(collectDate, Sr)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~siteID, scales = "free")
+
+variation <- swc_suva_slopes %>% 
   group_by(siteID) %>% 
   summarise(var = var(Sr),
             mean = mean(Sr))
 
-overall_var = var(suva_slopes$Sr)
-overall_mean = mean(suva_slopes$Sr)
+overall_var = var(swc_suva_slopes$Sr)
+overall_mean = mean(swc_suva_slopes$Sr)
 
 var_driver <- merge(x=variation,y=aquatic,
                     by.x='siteID',by.y='site_id')
