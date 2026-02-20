@@ -16,6 +16,8 @@
 #     Original script created
 #   Bobby Hensley (02/17/2026)
 #     Updated to work for either surface or groundwater data
+#   Bobby Hensley (02/19/2026)
+#     Updated to include option for Fe correction
 ######################################################################################################################## 
 library(neonUtilities)
 library(plyr)
@@ -24,11 +26,13 @@ library(broom)
 library(ggplot2)
 ######################################################################################################################## 
 
-siteID<-"COMO"
+#siteID<-c("SUGG","MAYF","TOMB","FLNT")
+siteID<-"all"
 
 #' Pulls surface water chemistry data from NEON data portal and loads tables into R environment
 rawData<-neonUtilities::loadByProduct(dpID="DP1.20093.001", site=siteID, startdate="2023-10",enddate="2025-09", 
-                                  package="expanded", include.provisional=T, check.size = F)
+                                  package="expanded", include.provisional=T, check.size = F,
+                                  token="eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJodHRwczovL2RhdGEubmVvbnNjaWVuY2Uub3JnL2FwaS92MC8iLCJzdWIiOiJoZW5zbGV5QGJhdHRlbGxlZWNvbG9neS5vcmciLCJzY29wZSI6InJhdGU6dW5saW1pdGVkIHJlYWQ6cmVsZWFzZXMgcmVhZDpyZWxlYXNlcy1sYXRlc3QiLCJpc3MiOiJodHRwczovL2RhdGEubmVvbnNjaWVuY2Uub3JnLyIsImV4cCI6MTgwMDkyMzAxMiwiaWF0IjoxNjQzMjQzMDEyLCJlbWFpbCI6ImhlbnNsZXlAYmF0dGVsbGVlY29sb2d5Lm9yZyJ9.YmAq_qJdZFiHLZRNrpA0muT3w70pwwukWPOUPJ73_bogfKps-1JSuxnVyp2wTYQuvDAFga7ltDPJj_SUQ9a1Iw")
 
 #' Assigns data table names regardless of swc or gwc prefix
 externalLabAbsorbanceScan<-rawData[[grep("externalLabAbsorbanceScan",names(rawData))]]
@@ -50,21 +54,21 @@ fullSpecData<-merge(fullSpecData, DOC,by.x="sampleID",by.y="sampleID")
 fullSpecData$SUVA<-fullSpecData$absorbance/fullSpecData$DOC*100 
 
 #' Writes out csv file of full spectrum results
-write.csv(fullSpecData,file=paste0(siteID,"_fullSpecData.csv"))
+fullSpecClean<-na.omit(fullSpecData) #' Omits samples with missing values to prevent errors
+write.csv(fullSpecClean,file="neon_suva_full.csv")
 
-#' Creates secondary table of just SUVA254 and SUVA350
-abs254<-fullSpecData[(fullSpecData$wavelength=="254"),]
+#' Creates table metrics of SUVA254 and SUVA350
+abs254<-fullSpecClean[(fullSpecClean$wavelength=="254"),]
 names(abs254)[names(abs254) == "SUVA"] <- "SUVA254"
-abs254[,c("wavelength","absorbance","DOC")]<-NULL
-abs350<-fullSpecData[(fullSpecData$wavelength=="350"),]
+abs254[,c("wavelength","absorbance")]<-NULL
+abs350<-fullSpecClean[(fullSpecClean$wavelength=="350"),]
 names(abs350)[names(abs350) == "SUVA"] <- "SUVA350"
 abs350<-abs350[,c("sampleID","SUVA350")]
-summaryData<-merge(abs254,abs350,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
+metricsData<-merge(abs254,abs350,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
 
 #' Calculates spectral slope ratio
-fullSpcecClean<-na.omit(fullSpecData) #' Omits samples with missing values to prevent errors
   #' Calculates slope from 275-295 nm
-  slopes275 <- fullSpcecClean %>% 
+  slopes275 <- fullSpecClean %>% 
   filter(wavelength >= 275 & wavelength <= 295) %>% 
   group_by(sampleID) %>% 
   nest() %>% 
@@ -77,7 +81,7 @@ fullSpcecClean<-na.omit(fullSpecData) #' Omits samples with missing values to pr
   ungroup() %>% 
   mutate(slope275 = slope275*-1)
   #' Calculates slope from 350-400 nm
-  slopes350 <- fullSpcecClean %>% 
+  slopes350 <- fullSpecClean %>% 
   filter(wavelength >= 350 & wavelength <= 400) %>% 
   group_by(sampleID) %>% 
   nest() %>% 
@@ -91,15 +95,87 @@ fullSpcecClean<-na.omit(fullSpecData) #' Omits samples with missing values to pr
   mutate(slope350 = slope350*-1)
   #' Calculates spectral slope ratio
   SlopeRatios <- merge(x = slopes275, y = slopes350,by = "sampleID") %>%
-  mutate(Sr = slope275/slope350)
+  mutate(SR = slope275/slope350)
   #' Merge with SUVA254 and SUVA350 table
-  SlopeRatios<-SlopeRatios[,c("sampleID","Sr")]
-  summaryData<-merge(summaryData,SlopeRatios,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
+  SlopeRatios<-SlopeRatios[,c("sampleID","SR")]
+  metricsData<-merge(metricsData,SlopeRatios,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
 
-#' Writes out secondary csv file of results
-write.csv(summaryData,file=paste0(siteID,"_summaryData.csv"))
+#' Writes out csv file of SUVA and SR metrics
+write.csv(metricsData,file="neon_suva_metrics.csv")
 
-##############################################################################################################################################################################
-plot<-ggplot(fullSpecData,aes(x=wavelength,y=SUVA, colour=sampleID))+
-  geom_line()+scale_x_continuous(limits = c(200, 400))+scale_y_continuous(limits = c(0, 10))
-plot
+#' Create table of site statistics
+statsData<-plyr::ddply(metricsData,c("siteID"),summarise,nSamples=n(),meanDOC=mean(DOC),sdDOC=sd(DOC),meanSUVA254=mean(SUVA254),sdSUVA254=sd(SUVA254),
+                       meanSUVA350=mean(SUVA350),sdSUVA350=sd(SUVA350),meanSR=mean(SR),sdSR=sd(SR))
+  
+#' Writes out csv file of site statistics
+write.csv(statsData,file="neon_suva_stats.csv")
+
+####### Option to correct for Fe interference #######
+Fe<-externalLabDataByAnalyte[(externalLabDataByAnalyte$analyte=="Fe"),]
+Fe<-Fe[,c("sampleID","analyteConcentration")]
+colnames(Fe)<-c("sampleID","Fe")
+correctedAbs<-merge(fullSpecClean,Fe,by.x="sampleID",by.y="sampleID",all.x=T,all.y=F)
+correctedAbs<-na.omit(correctedAbs) #- Removes any samples with missing Fe
+
+#' Keep and correct only wavelengths used in metrics
+#' SUVA254
+correctedAbs254<-correctedAbs[(correctedAbs$wavelength=="254"),]
+correctedAbs254$correctedAbsorbance<-correctedAbs254$absorbance-(0.0653*correctedAbs254$Fe)
+correctedAbs254$correctedSUVA254<-correctedAbs254$correctedAbsorbance/correctedAbs254$DOC*100
+#' SUVA 350
+correctedAbs350<-correctedAbs[(correctedAbs$wavelength=="350"),]
+correctedAbs350$correctedAbsorbance<-correctedAbs350$absorbance-(0.0323*correctedAbs350$Fe)
+correctedAbs350$correctedSUVA350<-correctedAbs350$correctedAbsorbance/correctedAbs350$DOC*100
+#' SR
+correctedAbs280<-correctedAbs[(correctedAbs$wavelength>=275),]
+correctedAbs280<-correctedAbs280[(correctedAbs280$wavelength<=295),]
+correctedAbs280$correctedAbsorbance<-correctedAbs280$absorbance-(0.0570*correctedAbs280$Fe)
+correctedAbs400<-correctedAbs[(correctedAbs$wavelength>=350),]
+correctedAbs400<-correctedAbs400[(correctedAbs400$wavelength<=400),]
+correctedAbs400$correctedAbsorbance<-correctedAbs400$absorbance-(0.0118*correctedAbs400$Fe)
+correctedSR<-rbind(correctedAbs280,correctedAbs400)
+correctedSR$correctedSUVA<-correctedSR$correctedAbsorbance/correctedSR$DOC*100
+correctedSlopes275 <- correctedSR %>% 
+  filter(wavelength >= 275 & wavelength <= 295) %>% 
+  group_by(sampleID) %>% 
+  nest() %>% 
+  mutate(S = map(data, ~lm(log(correctedSUVA) ~ wavelength, data = .x))) %>% 
+  mutate(slope = map(S, ~tidy(.x))) %>% 
+  unnest(slope) %>% 
+  select(sampleID, term, estimate) %>% 
+  pivot_wider(names_from = term, values_from = estimate) %>% 
+  dplyr::rename("intercept275" = `(Intercept)`,"slope275" = wavelength) %>% 
+  ungroup() %>% 
+  mutate(slope275 = slope275*-1)
+#' Calculates slope from 350-400 nm
+correctedSlopes350 <- correctedSR %>% 
+  filter(wavelength >= 350 & wavelength <= 400) %>% 
+  group_by(sampleID) %>% 
+  nest() %>% 
+  mutate(S = map(data, ~lm(log(correctedSUVA) ~ wavelength, data = .x))) %>% 
+  mutate(slope = map(S, ~tidy(.x))) %>% 
+  unnest(slope) %>% 
+  select(sampleID, term, estimate) %>% 
+  pivot_wider(names_from = term,values_from = estimate) %>% 
+  dplyr::rename("intercept350" = `(Intercept)`,"slope350" = wavelength) %>% 
+  ungroup() %>% 
+  mutate(slope350 = slope350*-1)
+#' Calculates spectral slope ratio
+correctedSlopeRatios <- merge(x = correctedSlopes275, y = correctedSlopes350,by = "sampleID") %>%
+  mutate(correctedSR = slope275/slope350)
+
+#' Merges corrected data table
+correctedAbs254<-correctedAbs254[,c("sampleID","Fe","correctedSUVA254")]
+correctedAbs350<-correctedAbs350[,c("sampleID","correctedSUVA350")]
+correctedSlopeRatios<-correctedSlopeRatios[,c("sampleID","correctedSR")]
+correctedMetricsData<-merge(correctedAbs254,correctedAbs350,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
+correctedMetricsData<-merge(correctedMetricsData,correctedSlopeRatios,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
+
+#' Option to merge with uncorrected metrics table
+correctedMetricsData<-merge(metricsData,correctedMetricsData,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
+names(correctedMetricsData)[names(correctedMetricsData) == "SUVA254"] <- "rawSUVA254"
+names(correctedMetricsData)[names(correctedMetricsData) == "SUVA350"] <- "rawSUVA350"
+names(correctedMetricsData)[names(correctedMetricsData) == "SR"] <- "rawSR"
+
+#' Writes out csv file of corrected SUVA and SR metrics
+write.csv(correctedMetricsData,file="neon_suva_metrics_corrected.csv")
