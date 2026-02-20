@@ -66,6 +66,17 @@ names(abs350)[names(abs350) == "SUVA"] <- "SUVA350"
 abs350<-abs350[,c("sampleID","SUVA350")]
 metricsData<-merge(abs254,abs350,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
 
+#' Calculates E2:E3 absorbance ratio 
+abs250<-fullSpecClean[(fullSpecClean$wavelength=="250"),]
+abs250<-abs250[,c("sampleID","absorbance")]
+names(abs250)[names(abs250) == "absorbance"] <- "abs250"
+abs365<-fullSpecClean[(fullSpecClean$wavelength=="364"|fullSpecClean$wavelength=="366"),]
+abs365<-plyr::ddply(abs365,c("sampleID"),summarise,abs365=mean(absorbance)) 
+E2E3<-merge(abs250,abs365,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
+E2E3$E2E3<-E2E3$abs250/E2E3$abs365
+E2E3<-E2E3[,c("sampleID","E2E3")]
+metricsData<-merge(metricsData,E2E3,by.x="sampleID",by.y="sampleID",all.x=T,all.y=T)
+
 #' Calculates spectral slope ratio
   #' Calculates slope from 275-295 nm
   slopes275 <- fullSpecClean %>% 
